@@ -1,83 +1,144 @@
-import { observer } from "mobx-react-lite"
-import { FC } from "react"
-import { Image, ImageStyle, TextStyle, View, ViewStyle } from "react-native"
-import { Text, Screen } from "@/components"
-import { isRTL } from "@/i18n"
-import { AppStackScreenProps } from "../navigators"
-import { $styles, type ThemedStyle } from "@/theme"
-import { useSafeAreaInsetsStyle } from "../utils/useSafeAreaInsetsStyle"
-import { useAppTheme } from "@/utils/useAppTheme"
+import React from 'react';
+import { SafeAreaView, View, Button, Text, StyleSheet, Alert } from 'react-native';
+import { intersect, polygon, lineString, area, length } from '@turf/turf'; // Direct imports
 
-const welcomeLogo = require("../../assets/images/logo.png")
-const welcomeFace = require("../../assets/images/welcome-face.png")
+// Define the types for GeoJSON Features if not automatically inferred strongly enough
+import type { Feature, Polygon, LineString, Point, FeatureCollection } from 'geojson';
 
-interface WelcomeScreenProps extends AppStackScreenProps<"Welcome"> {}
+const HomeScreen = () => {
 
-export const WelcomeScreen: FC<WelcomeScreenProps> = observer(function WelcomeScreen() {
-  const { themed, theme } = useAppTheme()
+  const runTurfTests = async () => {
+    Alert.alert("Turf Tests", "Running Turf.js tests. Check Metro Bundler console for logs.");
+    console.log("--- Starting Turf.js Tests in Fresh App ---");
 
-  const $bottomContainerInsets = useSafeAreaInsetsStyle(["bottom"])
+    // Test 1: Simpler Turf Test (area)
+    console.log("GeoProcessingService: --- Starting Simpler Turf Test (area) ---");
+    try {
+        const simpleTestPoly = polygon([[
+            [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]
+        ]], { name: "Simple Test Square" });
+        const calculatedArea = area(simpleTestPoly);
+        console.log("GeoProcessingService: Simpler Turf Test (area) - Area calculated:", calculatedArea);
+        if (typeof calculatedArea === 'number' && calculatedArea > 0) {
+            console.log("GeoProcessingService: Simpler Turf Test (area) - SUCCESS!");
+        } else {
+             console.error("GeoProcessingService: Simpler Turf Test (area) - FAILED (area not positive number).");
+        }
+    } catch (simpleTestError: any) {
+        console.error("GeoProcessingService: Simpler Turf Test (area) FAILED with error:", simpleTestError.message, simpleTestError.stack);
+    }
+    console.log("GeoProcessingService: --- Finished Simpler Turf Test (area) ---");
+
+
+    // Test 2: Direct Turf Test (intersect) - Original way
+    console.log("GeoProcessingService: --- Starting Direct Turf Test (intersect - Feature vs Feature) ---");
+    try {
+        const testPolyFeature = polygon([[
+            [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]
+        ]], { name: "Test Square" });
+
+        const testLineFeat = lineString([[-2.0, 0.0], [2.0, 0.0]], { name: "Test Line" });
+        
+        console.log("Test Polygon Feature (for intersect):", JSON.stringify(testPolyFeature));
+        console.log("Test Line Feature (for intersect):", JSON.stringify(testLineFeat));
+
+        // Check for TypeScript error here by hovering over testPolyFeature in the intersect call
+        const testIntersection = intersect(testPolyFeature, testLineFeat);
+
+        if (testIntersection) {
+            console.log("GeoProcessingService: Direct Turf Test (Feature vs Feature) SUCCEEDED. Intersection:", JSON.stringify(testIntersection));
+            const testLen = length(testIntersection, { units: 'miles' });
+            console.log("GeoProcessingService: Direct Turf Test (Feature vs Feature) intersection length:", testLen);
+            if (testLen > 0) {
+                console.log("GeoProcessingService: Direct Turf Test (Feature vs Feature) - SUCCESS CONFIRMED!");
+            } else {
+                 console.error("GeoProcessingService: Direct Turf Test (Feature vs Feature) - Intersection length is 0 or less - FAILED.");
+            }
+        } else {
+            console.error("GeoProcessingService: Direct Turf Test (Feature vs Feature) INTERSECTION IS NULL - FAILED.");
+        }
+    } catch (testError: any) {
+        console.error("GeoProcessingService: Direct Turf Test (Feature vs Feature) FAILED with error:", testError.message, testError.stack);
+    }
+    console.log("GeoProcessingService: --- Finished Direct Turf Test (intersect - Feature vs Feature) ---");
+
+
+    // Test 3: Direct Turf Test (intersect) - With FeatureCollection Hack
+    console.log("GeoProcessingService: --- Starting Direct Turf Test (intersect - FC Hack) ---");
+    try {
+        const fcTestPolyFeature = polygon([[
+            [-1.0, -1.0], [1.0, -1.0], [1.0, 1.0], [-1.0, 1.0], [-1.0, -1.0]
+        ]], { name: "FC Test Square" });
+
+        const testPolygonFeatureCollection = {
+            type: "FeatureCollection" as "FeatureCollection", // Explicit cast
+            features: [fcTestPolyFeature]
+        };
+
+        const fcTestLineFeat = lineString([[-2.0, 0.0], [2.0, 0.0]], { name: "FC Test Line" });
+
+        console.log("Test Polygon FeatureCollection (for FC Hack intersect):", JSON.stringify(testPolygonFeatureCollection));
+        console.log("Test Line Feature (for FC Hack intersect):", JSON.stringify(fcTestLineFeat));
+        
+        // Check for TypeScript error here by hovering over testPolygonFeatureCollection
+        const fcTestIntersection = intersect(testPolygonFeatureCollection, fcTestLineFeat);
+
+        if (fcTestIntersection) {
+            console.log("GeoProcessingService: Direct Turf Test (FC Hack) SUCCEEDED. Intersection:", JSON.stringify(fcTestIntersection));
+            const fcTestLen = length(fcTestIntersection, { units: 'miles' });
+            console.log("GeoProcessingService: Direct Turf Test (FC Hack) intersection length:", fcTestLen);
+             if (fcTestLen > 0) {
+                console.log("GeoProcessingService: Direct Turf Test (FC Hack) - SUCCESS CONFIRMED!");
+            } else {
+                 console.error("GeoProcessingService: Direct Turf Test (FC Hack) - Intersection length is 0 or less - FAILED.");
+            }
+        } else {
+            console.error("GeoProcessingService: Direct Turf Test (FC Hack) INTERSECTION IS NULL - FAILED.");
+        }
+    } catch (testError: any)
+     {
+        console.error("GeoProcessingService: Direct Turf Test (FC Hack) FAILED with error:", testError.message, testError.stack);
+    }
+    console.log("GeoProcessingService: --- Finished Direct Turf Test (intersect - FC Hack) ---");
+
+    console.log("--- Finished ALL Turf.js Tests in Fresh App ---");
+    Alert.alert("Turf Tests", "Tests finished. Check Metro Bundler console for results.");
+  };
 
   return (
-    <Screen preset="fixed" contentContainerStyle={$styles.flex1}>
-      <View style={themed($topContainer)}>
-        <Image style={themed($welcomeLogo)} source={welcomeLogo} resizeMode="contain" />
-        <Text
-          testID="welcome-heading"
-          style={themed($welcomeHeading)}
-          tx="welcomeScreen:readyForLaunch"
-          preset="heading"
-        />
-        <Text tx="welcomeScreen:exciting" preset="subheading" />
-        <Image
-          style={$welcomeFace}
-          source={welcomeFace}
-          resizeMode="contain"
-          tintColor={theme.colors.palette.neutral900}
-        />
+    <SafeAreaView style={styles.container}>
+      <View style={styles.content}>
+        <Text style={styles.title}>Turf.js Test App</Text>
+        <Button title="Run Turf.js Tests" onPress={runTurfTests} />
+        <Text style={styles.instructions}>
+          Press the button and check the Metro Bundler console for test results.
+        </Text>
       </View>
+    </SafeAreaView>
+  );
+};
 
-      <View style={themed([$bottomContainer, $bottomContainerInsets])}>
-        <Text tx="welcomeScreen:postscript" size="md" />
-      </View>
-    </Screen>
-  )
-})
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f0f0f0',
+  },
+  content: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+  },
+  title: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    marginBottom: 20,
+  },
+  instructions: {
+    marginTop: 20,
+    textAlign: 'center',
+    color: '#333',
+  }
+});
 
-const $topContainer: ThemedStyle<ViewStyle> = ({ spacing }) => ({
-  flexShrink: 1,
-  flexGrow: 1,
-  flexBasis: "57%",
-  justifyContent: "center",
-  paddingHorizontal: spacing.lg,
-})
-
-const $bottomContainer: ThemedStyle<ViewStyle> = ({ colors, spacing }) => ({
-  flexShrink: 1,
-  flexGrow: 0,
-  flexBasis: "43%",
-  backgroundColor: colors.palette.neutral100,
-  borderTopLeftRadius: 16,
-  borderTopRightRadius: 16,
-  paddingHorizontal: spacing.lg,
-  justifyContent: "space-around",
-})
-
-const $welcomeLogo: ThemedStyle<ImageStyle> = ({ spacing }) => ({
-  height: 88,
-  width: "100%",
-  marginBottom: spacing.xxl,
-})
-
-const $welcomeFace: ImageStyle = {
-  height: 169,
-  width: 269,
-  position: "absolute",
-  bottom: -47,
-  right: -80,
-  transform: [{ scaleX: isRTL ? -1 : 1 }],
-}
-
-const $welcomeHeading: ThemedStyle<TextStyle> = ({ spacing }) => ({
-  marginBottom: spacing.md,
-})
+export default HomeScreen; // Or export default App; if you modified App.tsx directly
