@@ -227,11 +227,149 @@ const HomeScreen = () => {
     Alert.alert("Manual Seg Test Done", "Check console/screen.");
   };
 
+  const testMultiStateLineSegmentation = async () => {
+    setTestResults([]);
+    logResult("--- Starting Multi-State Line Segmentation Test ---");
+
+    // 1. Define a sample line that crosses multiple state borders
+    // Example: Oregon -> Washington -> Idaho
+    // P0: Oregon, P1: WA Border 1, P2: Central WA, P3: WA Border 2, P4: Idaho
+    const sampleMultiStateCoords: Position[] = [
+        [-117.42990830255845, 47.65688579301931], // Outside WA (e.g., Oregon)
+        [-117.26456350542409, 47.66573346066775],
+        [-117.1150197518266, 47.675542047852375],
+        [-116.95333769841587, 47.71835127805564],
+        [-116.78882326681907, 47.676118098448754],
+        [-115.38353688599075, 47.38925752629009]
+    ];
+    const sampleMultiStateLine = lineString(sampleMultiStateCoords, { name: "Test OR-WA-ID drive" });
+    logResult("Sample multi-state line coordinates:", sampleMultiStateCoords);
+
+    if (!stateBoundariesGeoJSON || !stateBoundariesGeoJSON.features) {
+      logResult("ERROR: State boundaries GeoJSON not loaded correctly.");
+      return;
+    }
+
+    const mileageByState = new Map<string, number>();
+
+    // 2. Iterate through relevant states (e.g., WA, ID, OR for this test line)
+    // For a full test, you'd use all `stateBoundariesGeoJSON.features` or filter by a region.
+    // For this example, let's pick a few.
+    const statesToTest = ["Washington", "Idaho", "Montana"]; 
+
+    for (const stateName of statesToTest) {
+      const stateFeatureRaw = stateBoundariesGeoJSON.features.find(
+        (f: Feature<Polygon | MultiPolygon, any>) => f.properties && f.properties.name === stateName
+      );
+
+      if (!stateFeatureRaw) {
+        logResult(`State "${stateName}" not found in GeoJSON. Skipping.`);
+        continue;
+      }
+      const stateFeature = stateFeatureRaw as Feature<Polygon | MultiPolygon>;
+      logResult(`\nProcessing for State: ${stateName}`);
+
+      let lengthInThisState = 0;
+
+      try {
+        // A. Find all points where the *entire* multi-state line intersects *this specific state's* boundary
+        const intersectionPointsResult = lineIntersect(sampleMultiStateLine, stateFeature.geometry);
+        logResult(`Intersection points with ${stateName} boundary:`, intersectionPointsResult.features.map(f => f.geometry.coordinates));
+
+        // B. Create a collection of critical points FOR THIS STATE AND LINE:
+        //    - Start of the original multi-state line
+        //    - End of the original multi-state line
+        //    - All intersection points found with *this specific state's* boundary
+        const criticalCoords: Position[] = [];
+        criticalCoords.push(sampleMultiStateLine.geometry.coordinates[0]); // Start of original line
+
+        intersectionPointsResult.features.forEach(pFeature => {
+          criticalCoords.push(pFeature.geometry.coordinates);
+        });
+
+        criticalCoords.push(sampleMultiStateLine.geometry.coordinates[sampleMultiStateLine.geometry.coordinates.length - 1]); // End of original line
+        
+        const uniqueCoordsStrings = new Set(criticalCoords.map(c => JSON.stringify(c)));
+        let sortedUniqueCriticalCoords = Array.from(uniqueCoordsStrings).map(s => JSON.parse(s) as Position);
+
+        // C. Sort these critical points based on their order along the original multi-state line.
+        // THIS IS THE HARDEST PART FOR A GENERAL CASE.
+        // For simplicity in this test, we'll sort by the primary direction of travel of the overall line.
+        // Our sample line goes generally East-North-East. Sorting by longitude first, then latitude.
+        sortedUniqueCriticalCoords.sort((a, b) => {
+          if (a[0] !== b[0]) return a[0] - b[0]; // Longitude (West to East)
+          return a[1] - b[1];                   // Latitude (South to North)
+        });
+        // You MUST adjust this sort if your sampleMultiStateCoords have a different general direction.
+        logResult("Sorted unique critical points for slicing relative to this state:", sortedUniqueCriticalCoords);
+
+        // D. Create sub-segments from the sorted points and test their midpoints against *this specific state*
+        if (sortedUniqueCriticalCoords.length < 2) {
+          logResult("Not enough unique critical points to form segments for this state. Checking if whole line is inside/outside this state.");
+          const midPt = midpoint(point(sampleMultiStateLine.geometry.coordinates[0]), point(sampleMultiStateLine.geometry.coordinates[sampleMultiStateLine.geometry.coordinates.length-1]));
+          if (booleanPointInPolygon(midPt, stateFeature.geometry)) {
+            const len = length(sampleMultiStateLine, { units: 'miles' });
+            logResult(`Entire line's midpoint is INSIDE ${stateName}. Adding full length: ${len.toFixed(3)} miles. (Needs robust check)`);
+            lengthInThisState += len;
+          } else {
+            logResult(`Entire line's midpoint is OUTSIDE ${stateName}.`);
+          }
+        } else {
+          logResult("Creating and testing sub-segments for this state...");
+          for (let i = 0; i < sortedUniqueCriticalCoords.length - 1; i++) {
+            const pt1 = sortedUniqueCriticalCoords[i];
+            const pt2 = sortedUniqueCriticalCoords[i + 1];
+
+            if (JSON.stringify(pt1) === JSON.stringify(pt2)) {
+              logResult(`Skipping identical points for segment: ${JSON.stringify(pt1)}`);
+              continue;
+            }
+
+            const subSegmentLine = lineString([pt1, pt2]);
+            // logResult(`Testing sub-segment for ${stateName}: ${JSON.stringify([pt1, pt2])}`); // Can be verbose
+            
+            const p1Feature = point(pt1);
+            const p2Feature = point(pt2);
+            const midPtOfSubsegment = midpoint(p1Feature, p2Feature);
+
+            if (booleanPointInPolygon(midPtOfSubsegment, stateFeature.geometry)) {
+              const segmentLengthVal = length(subSegmentLine, { units: 'miles' });
+              logResult(`  -> Segment [${JSON.stringify(pt1)} to ${JSON.stringify(pt2)}] midpoint INSIDE ${stateName}. Length: ${segmentLengthVal.toFixed(3)} miles.`);
+              lengthInThisState += segmentLengthVal;
+            } else {
+              // logResult(`  -> Segment [${JSON.stringify(pt1)} to ${JSON.stringify(pt2)}] midpoint OUTSIDE ${stateName}.`);
+            }
+          }
+        }
+        mileageByState.set(stateName, (mileageByState.get(stateName) || 0) + lengthInThisState);
+        logResult(`Total length calculated for ${stateName}: ${lengthInThisState.toFixed(3)} miles`);
+
+      } catch (err: any) {
+        logResult(`ERROR processing state ${stateName}:`, err.message);
+        console.error(err.stack);
+      }
+    } // End of loop for statesToTest
+
+    logResult("\n--- Mileage Breakdown by State (Test) ---");
+    let overallTotalMiles = 0;
+    mileageByState.forEach((miles, state) => {
+      logResult(`${state}: ${miles.toFixed(3)} miles`);
+      overallTotalMiles += miles;
+    });
+    logResult(`Overall total line length from state segments: ${overallTotalMiles.toFixed(3)} miles`);
+    const originalLineLength = length(sampleMultiStateLine, {units: 'miles'});
+    logResult(`Original full line length: ${originalLineLength.toFixed(3)} miles (for comparison)`);
+
+
+    logResult("\n--- Finished Multi-State Line Segmentation Test ---");
+    Alert.alert("Multi-State Test Done", "Check console/screen.");
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.buttonContainer}>
         <Button title="Run Basic Turf Tests" onPress={runBasicTurfTests} />
-        <Button title="Test Manual State Segmentation" onPress={testManualLineSegmentation} />
+        <Button title="Test Multi-State Line Segmentation" onPress={testMultiStateLineSegmentation} />
       </View>
       <ScrollView style={styles.resultsScroll} contentContainerStyle={styles.resultsContent}>
         <Text style={styles.resultsTitle}>Test Results:</Text>
